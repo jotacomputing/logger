@@ -1,10 +1,10 @@
-// query response will be a uder balance response or a holdings response or a success on adding a new user 
 use memmap2::MmapMut;
 use std::fs::{self, OpenOptions };
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::os::unix::fs::OpenOptionsExt;
-use crate::logger::types::OrderLogs;
+use crate::logger::types::OrderLogWrapper;
+
 
 // QueueHeader with cache-line padding matching Go
 #[repr(C)]
@@ -19,12 +19,12 @@ pub struct QueueHeader {
 const QUEUE_MAGIC: u32 = 0xDEA;
 // reduce size 
 const QUEUE_CAPACITY: usize = 65536;
-const LOG_SIZE: usize = std::mem::size_of::<OrderLogs>();
+const LOG_SIZE: usize = std::mem::size_of::<OrderLogWrapper>();
 const HEADER_SIZE: usize = std::mem::size_of::<QueueHeader>();
 const TOTAL_SIZE: usize = HEADER_SIZE + (QUEUE_CAPACITY * LOG_SIZE);
 
 // Compile-time layout assertions (fail build if wrong)
-const _: () = assert!(LOG_SIZE == 56, "Order must be 56 bytes");
+const _: () = assert!(LOG_SIZE == 64, "Order must be 64 bytes");
 const _: () = assert!(HEADER_SIZE == 136, "QueueHeader must be 136 bytes");
 const _: () = {
     // Verify ConsumerTail is at offset 64
@@ -38,7 +38,7 @@ const _: () = {
 pub struct OrderLogQueue {
     mmap: MmapMut,
     header_ptr: *mut QueueHeader,           // Cached pointer
-    log_ptr: *mut OrderLogs,       // Cached logs pointer
+    log_ptr: *mut OrderLogWrapper,       // Cached logs pointer
 }
 
 impl OrderLogQueue {
@@ -87,7 +87,7 @@ impl OrderLogQueue {
             .map_err(|e| QueueError::Flush(e.to_string()))?;
     
         let log_ptr = unsafe {
-            mmap.as_mut_ptr().add(HEADER_SIZE) as *mut OrderLogs
+            mmap.as_mut_ptr().add(HEADER_SIZE) as *mut OrderLogWrapper
         };
     
         Ok(OrderLogQueue {
@@ -123,7 +123,7 @@ impl OrderLogQueue {
 
         // Cache both pointers
         let header_ptr = { mmap.as_mut_ptr() as *mut QueueHeader };
-        let log_ptr = unsafe { mmap.as_mut_ptr().add(HEADER_SIZE) as *mut OrderLogs };
+        let log_ptr = unsafe { mmap.as_mut_ptr().add(HEADER_SIZE) as *mut OrderLogWrapper };
 
         // Validate
         let header = unsafe { &*header_ptr };
@@ -161,13 +161,13 @@ impl OrderLogQueue {
 
     /// Get order at position - ZERO COST pointer arithmetic
     #[inline(always)]
-    fn get_log_response(&self, pos: usize) -> OrderLogs {
+    fn get_log_response(&self, pos: usize) -> OrderLogWrapper {
         unsafe { *self.log_ptr.add(pos) }
     }
 
     /// Set order at position - ZERO COST pointer arithmetic
     #[inline(always)]
-    fn set_log_response(&self, pos: usize, response: OrderLogs) {
+    fn set_log_response(&self, pos: usize, response: OrderLogWrapper) {
         unsafe {
             *self.log_ptr.add(pos) = response;
         }
@@ -175,7 +175,7 @@ impl OrderLogQueue {
 
     /// ULTRA-FAST dequeue - all pointers cached, no borrows
     #[inline]
-    pub fn dequeue(&mut self) -> Result<Option<OrderLogs>, QueueError> {
+    pub fn dequeue(&mut self) -> Result<Option<OrderLogWrapper>, QueueError> {
         let header = self.header_mut();
 
         let producer_head = header.producer_head.load(Ordering::Acquire);
@@ -196,7 +196,7 @@ impl OrderLogQueue {
         Ok(Some(log))
     }
 
-    pub fn enqueue(&mut self, log: OrderLogs) -> Result<(), QueueError> {
+    pub fn enqueue(&mut self, log: OrderLogWrapper) -> Result<(), QueueError> {
         let header = self.header_mut();
 
         let consumer_tail = header.consumer_tail.load(Ordering::Acquire);
@@ -235,7 +235,7 @@ impl OrderLogQueue {
             .map_err(|e| QueueError::Flush(e.to_string()))
     }
 
-    pub fn dequeue_spin(&mut self, max_spins: usize) -> Result<Option<OrderLogs>, QueueError> {
+    pub fn dequeue_spin(&mut self, max_spins: usize) -> Result<Option<OrderLogWrapper>, QueueError> {
         for _ in 0..max_spins {
             match self.dequeue()? {
                 Some(order) => return Ok(Some(order)),

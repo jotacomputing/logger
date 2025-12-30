@@ -2,14 +2,14 @@ use std::time::{Instant, Duration};
 use crossbeam::channel::Receiver;
 use questdb::{ingress::{Sender,Buffer,TimestampNanos}};
 
-use crate::logger::types::{BalanceLogs, HoldingsLogs, OrderLogs};
+use crate::logger::types::{BalanceLogWrapper, HoldingLogWrapper, OrderLogWrapper};
 
 const FLUSH_INTERVAL : Duration = Duration::from_millis(10);
 const MAX_BATCH: usize = 1000;
 pub struct LogFlusher{
-    pub order_log_reciver : Receiver<OrderLogs>,
-    pub balance_log_receiver : Receiver<BalanceLogs>,
-    pub holding_log_reciver : Receiver<HoldingsLogs>,
+    pub order_log_reciver : Receiver<OrderLogWrapper>,
+    pub balance_log_receiver : Receiver<BalanceLogWrapper>,
+    pub holding_log_reciver : Receiver<HoldingLogWrapper>,
     pub sender              : Sender,
     pub buffer              : Buffer,
     pub last_flush          : Instant
@@ -17,9 +17,9 @@ pub struct LogFlusher{
 
 impl LogFlusher{
     pub fn new(
-        order_log_reciver : Receiver<OrderLogs>, 
-        balance_log_receiver : Receiver<BalanceLogs>,
-        holding_log_reciver : Receiver<HoldingsLogs>,
+        order_log_reciver : Receiver<OrderLogWrapper>, 
+        balance_log_receiver : Receiver<BalanceLogWrapper>,
+        holding_log_reciver : Receiver<HoldingLogWrapper>,
     )->Self{
 
         let sender_to_db = Sender::from_conf("http::addr=localhost:9000;");
@@ -38,12 +38,12 @@ impl LogFlusher{
         }
     }
 
-    pub fn encode_order_log(&mut self , log : OrderLogs)->questdb::Result<()>{
+    pub fn encode_order_log(&mut self , log : OrderLogWrapper)->questdb::Result<()>{
         self.buffer
         .table("order_logs")?
-        .symbol("instrument", log.symbol.to_string())?
-        .symbol("side", if log.side == 0 { "bid" } else { "ask" })?
-        .symbol("event_type", match log.order_event_type {
+        .symbol("instrument", log.order_delta.symbol.to_string())?
+        .symbol("side", if log.order_delta.side == 0 { "bid" } else { "ask" })?
+        .symbol("event_type", match log.order_delta.order_event_type {
             0 => "received",
             1 => "matched",
             2 => "canceled",
@@ -55,68 +55,48 @@ impl LogFlusher{
             2 => "debug",
             _ => "unknown",
         })?
-        .symbol("source", match log.source {
-            0 => "shm",
-            1 => "balance_manager",
-            2 => "engine",
-            _ => "unknown",
-        })?
-        .column_i64("event_id", log.event_id as i64)?
-        .column_i64("order_id", log.order_id as i64)?
-        .column_i64("user_id", log.user_id as i64)?
-        .column_i64("price", log.price as i64)?
-        .column_i64("shares_qty", log.shares_qty as i64)?
+        .column_i64("event_id", log.order_delta.event_id as i64)?
+        .column_i64("order_id", log.order_delta.order_id as i64)?
+        .column_i64("user_id", log.order_delta.user_id as i64)?
+        .column_i64("price", log.order_delta.price as i64)?
+        .column_i64("shares_qty", log.order_delta.shares_qty as i64)?
         .at(TimestampNanos::new(log.timestamp as i64 * 1_000_000_000))?;
       Ok(())
     }
 
-    pub fn encode_balance_log(&mut self , log : BalanceLogs)->questdb::Result<()>{
+    pub fn encode_balance_log(&mut self , log : BalanceLogWrapper)->questdb::Result<()>{
         self.buffer
         .table("balance_logs")?
-        .symbol("reason", if log.reason == 0 { "lock" } else { "update" })?
+        .symbol("reason", if log.balance_delta.reason == 0 { "lock" } else { "update" })?
         .symbol("severity", match log.severity {
             0 => "info",
             1 => "error",
             _ => "debug",
         })?
-        .symbol("source", match log.source {
-            0 => "shm",
-            1 => "balance_manager",
-            _ => "unknown",
-        })?
-        .column_i64("event_id", log.event_id as i64)?
-        .column_i64("user_id", log.user_id as i64)?
-        .column_i64("order_id", log.order_id as i64)?
-        .column_i64("old_reserved_balance", log.old_reserved_balance as i64)?
-        .column_i64("old_available_balance", log.old_available_balance as i64)?
-        .column_i64("new_reserved_balance", log.new_reserved_balance as i64)?
-        .column_i64("new_available_balance", log.new_available_balance as i64)?
+        .column_i64("event_id", log.balance_delta.event_id as i64)?
+        .column_i64("user_id", log.balance_delta.user_id as i64)?
+        .column_i64("order_id", log.balance_delta.order_id as i64)?
+        .column_i64("delta_reserved_balance", log.balance_delta.delta_reserved as i64)?
+        .column_i64("delta_available_balance", log.balance_delta.delta_available as i64)?
         .at(TimestampNanos::new(log.timestamp as i64 * 1_000_000_000))?;
         Ok(())
     }
 
-    pub fn encode_holding_logs(&mut self , log : HoldingsLogs)->questdb::Result<()>{
+    pub fn encode_holding_logs(&mut self , log : HoldingLogWrapper)->questdb::Result<()>{
         self.buffer
         .table("holding_logs")?
-        .symbol("instrument", log.symbol.to_string())?
-        .symbol("reason", if log.reason == 0 { "lock" } else { "fill" })?
+        .symbol("instrument", log.holding_delta.symbol.to_string())?
+        .symbol("reason", if log.holding_delta.reason == 0 { "lock" } else { "fill" })?
         .symbol("severity", match log.severity {
             0 => "info",
             1 => "error",
             _ => "debug",
         })?
-        .symbol("source", match log.source {
-            0 => "shm",
-            1 => "balance_manager",
-            _ => "unknown",
-        })?
-        .column_i64("event_id", log.event_id as i64)?
-        .column_i64("user_id", log.user_id as i64)?
-        .column_i64("order_id", log.order_id as i64)?
-        .column_i64("old_reserved_holding", log.old_reserved_holding as i64)?
-        .column_i64("new_reserved_holding", log.new_reserved_holding as i64)?
-        .column_i64("old_available_holding", log.old_available_holding as i64)?
-        .column_i64("new_available_holding", log.new_available_holding as i64)?
+        .column_i64("event_id", log.holding_delta.event_id as i64)?
+        .column_i64("user_id", log.holding_delta.user_id as i64)?
+        .column_i64("order_id", log.holding_delta.order_id as i64)?
+        .column_i64("delta_reserved_holding", log.holding_delta.delta_reserved as i64)?
+        .column_i64("delta_available_holding", log.holding_delta.delta_available as i64)?
         .at(TimestampNanos::new(log.timestamp as i64 * 1_000_000_000))?;
         Ok(())
     }

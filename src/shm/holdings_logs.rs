@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions };
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::os::unix::fs::OpenOptionsExt;
-use crate::logger::types::HoldingsLogs;
+use crate::logger::types::HoldingLogWrapper;
 
 
 // QueueHeader with cache-line padding matching Go
@@ -20,7 +20,7 @@ pub struct QueueHeader {
 const QUEUE_MAGIC: u32 = 0xDEE;
 // reduce size 
 const QUEUE_CAPACITY: usize = 65536;
-const LOG_SIZE: usize = std::mem::size_of::<HoldingsLogs>();
+const LOG_SIZE: usize = std::mem::size_of::<HoldingLogWrapper>();
 const HEADER_SIZE: usize = std::mem::size_of::<QueueHeader>();
 const TOTAL_SIZE: usize = HEADER_SIZE + (QUEUE_CAPACITY * LOG_SIZE);
 
@@ -39,7 +39,7 @@ const _: () = {
 pub struct HoldingLogQueue {
     mmap: MmapMut,
     header_ptr: *mut QueueHeader,           // Cached pointer
-    log_ptr: *mut HoldingsLogs,       // Cached logs pointer
+    log_ptr: *mut HoldingLogWrapper,       // Cached logs pointer
 }
 
 impl HoldingLogQueue {
@@ -88,7 +88,7 @@ impl HoldingLogQueue {
             .map_err(|e| QueueError::Flush(e.to_string()))?;
     
         let log_ptr = unsafe {
-            mmap.as_mut_ptr().add(HEADER_SIZE) as *mut HoldingsLogs
+            mmap.as_mut_ptr().add(HEADER_SIZE) as *mut HoldingLogWrapper
         };
     
         Ok(HoldingLogQueue {
@@ -124,7 +124,7 @@ impl HoldingLogQueue {
 
         // Cache both pointers
         let header_ptr = { mmap.as_mut_ptr() as *mut QueueHeader };
-        let log_ptr = unsafe { mmap.as_mut_ptr().add(HEADER_SIZE) as *mut HoldingsLogs };
+        let log_ptr = unsafe { mmap.as_mut_ptr().add(HEADER_SIZE) as *mut HoldingLogWrapper };
 
         // Validate
         let header = unsafe { &*header_ptr };
@@ -162,13 +162,13 @@ impl HoldingLogQueue {
 
     /// Get order at position - ZERO COST pointer arithmetic
     #[inline(always)]
-    fn get_log_response(&self, pos: usize) -> HoldingsLogs {
+    fn get_log_response(&self, pos: usize) -> HoldingLogWrapper {
         unsafe { *self.log_ptr.add(pos) }
     }
 
     /// Set order at position - ZERO COST pointer arithmetic
     #[inline(always)]
-    fn set_log_response(&self, pos: usize, response: HoldingsLogs) {
+    fn set_log_response(&self, pos: usize, response: HoldingLogWrapper) {
         unsafe {
             *self.log_ptr.add(pos) = response;
         }
@@ -176,7 +176,7 @@ impl HoldingLogQueue {
 
     /// ULTRA-FAST dequeue - all pointers cached, no borrows
     #[inline]
-    pub fn dequeue(&mut self) -> Result<Option<HoldingsLogs>, QueueError> {
+    pub fn dequeue(&mut self) -> Result<Option<HoldingLogWrapper>, QueueError> {
         let header = self.header_mut();
 
         let producer_head = header.producer_head.load(Ordering::Acquire);
@@ -197,7 +197,7 @@ impl HoldingLogQueue {
         Ok(Some(log))
     }
 
-    pub fn enqueue(&mut self, log: HoldingsLogs) -> Result<(), QueueError> {
+    pub fn enqueue(&mut self, log: HoldingLogWrapper) -> Result<(), QueueError> {
         let header = self.header_mut();
 
         let consumer_tail = header.consumer_tail.load(Ordering::Acquire);
@@ -236,7 +236,7 @@ impl HoldingLogQueue {
             .map_err(|e| QueueError::Flush(e.to_string()))
     }
 
-    pub fn dequeue_spin(&mut self, max_spins: usize) -> Result<Option<HoldingsLogs>, QueueError> {
+    pub fn dequeue_spin(&mut self, max_spins: usize) -> Result<Option<HoldingLogWrapper>, QueueError> {
         for _ in 0..max_spins {
             match self.dequeue()? {
                 Some(order) => return Ok(Some(order)),

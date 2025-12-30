@@ -1,19 +1,19 @@
-use crate::{logger::types::{BalanceLogs, HoldingsLogs, OrderLogs}, shm::{balance_logs::BalanceLogQueue, holdings_logs::HoldingLogQueue, order_logs::OrderLogQueue}};
+use crate::{logger::types::{BalanceLogWrapper, HoldingLogWrapper, OrderLogWrapper}, shm::{balance_logs::BalanceLogQueue, holdings_logs::HoldingLogQueue, order_logs::OrderLogQueue}};
 use crossbeam::channel::Sender;
 pub struct LogPoller{
     pub order_log_queue   : OrderLogQueue,
-    pub order_log_sender  : Sender<OrderLogs>,
+    pub order_log_sender  : Sender<OrderLogWrapper>,
     pub balance_log_queue : BalanceLogQueue,
-    pub balance_log_sender : Sender<BalanceLogs>,
+    pub balance_log_sender : Sender<BalanceLogWrapper>,
     pub holding_log_queue : HoldingLogQueue,
-    pub holding_log_sender : Sender<HoldingsLogs>,
+    pub holding_log_sender : Sender<HoldingLogWrapper>,
 
 }
 
 impl LogPoller{
-    pub fn new(order_log_sender  : Sender<OrderLogs> , 
-        balance_log_sender : Sender<BalanceLogs>,
-        holding_log_sender : Sender<HoldingsLogs>
+    pub fn new(order_log_sender  : Sender<OrderLogWrapper> , 
+        balance_log_sender : Sender<BalanceLogWrapper>,
+        holding_log_sender : Sender<HoldingLogWrapper>
     )->Self{
         let order_log_shm_queue = OrderLogQueue::open("/tmp/OrderLogs");
         let balance_log_shm_queue = BalanceLogQueue::open("/tmp/BalanceLogs");

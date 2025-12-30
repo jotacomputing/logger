@@ -1,10 +1,10 @@
-use logger::{logger::{log_flusher::LogFlusher, types::{BalanceLogs, HoldingsLogs, OrderLogs}}, shm::{balance_logs::BalanceLogQueue, holdings_logs::HoldingLogQueue, order_logs::OrderLogQueue, poller::LogPoller}};
+use logger::{logger::{log_flusher::LogFlusher, types::{BalanceLogWrapper, HoldingLogWrapper, OrderLogWrapper}}, shm::{balance_logs::BalanceLogQueue, holdings_logs::HoldingLogQueue, order_logs::OrderLogQueue, poller::LogPoller}};
 
 fn main(){
 
-    let (order_log_sender , order_log_receiver) = crossbeam::channel::bounded::<OrderLogs>(32768);
-    let (balance_log_sender , balance_log_receiver) = crossbeam::channel::bounded::<BalanceLogs>(32768);
-    let (holding_log_sender , holding_log_receiver) = crossbeam::channel::bounded::<HoldingsLogs>(32768);
+    let (order_log_sender , order_log_receiver) = crossbeam::channel::bounded::<OrderLogWrapper>(32768);
+    let (balance_log_sender , balance_log_receiver) = crossbeam::channel::bounded::<BalanceLogWrapper>(32768);
+    let (holding_log_sender , holding_log_receiver) = crossbeam::channel::bounded::<HoldingLogWrapper>(32768);
 
 
     let poller_handle = std::thread::spawn(move||{
