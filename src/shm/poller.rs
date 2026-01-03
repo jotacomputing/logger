@@ -23,13 +23,16 @@ impl LogPoller{
         let holdings_log_queue = HoldingLogQueue::open("/tmp/HoldingLogs");
         let trade_log_queue = TradeLogQueue::open("/tmp/TradeLogs");
         if order_log_shm_queue.is_err(){
-            eprintln!("failed to open the log queue");
+            eprintln!("failed to open the order log queue");
         }
         if balance_log_shm_queue.is_err(){
-            eprintln!("failed to open the log queue");
+            eprintln!("failed to open the balance log queue");
         }
         if holdings_log_queue.is_err(){
-            eprintln!("failed to open the log queue");
+            eprintln!("failed to open the holding log queue");
+        }
+        if trade_log_queue.is_err(){
+            eprintln!("failed to open trade log queue");
         }
 
         Self { 
