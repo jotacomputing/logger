@@ -93,7 +93,7 @@ pub enum BaseLogs{
 #[repr(C)]
 #[derive(Debug , Clone , Copy)]
 pub struct TradeLogs{
-    pub trade_time      : i64 ,
+    pub timestamp       : i64 ,
     pub buyer_order_id  : u64 ,
     pub seller_order_id : u64 ,
     pub price           : u64 ,

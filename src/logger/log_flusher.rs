@@ -132,6 +132,24 @@ impl LogFlusher {
         Ok(())
     }
 
+    #[inline(always)]
+    fn encode_trade_log(&mut self, log: TradeLogs) -> questdb::Result<()> {
+        self.buffer
+            .table("trade_logs")?
+            .symbol("symbol", log.symbol.to_string())?
+            .column_i64("price", log.price as i64)?
+            .column_i64("quantity", log.quantity as i64)?
+            .column_i64("buyer_order_id", log.buyer_order_id as i64)?
+            .column_i64("seller_order_id", log.seller_order_id as i64)?
+            .column_bool("is_buyer_maker", log.is_buyer_maker)?
+            .at(TimestampNanos::new(log.timestamp))?;
+
+        self.rows_written += 1;
+        Ok(())
+    }
+
+
+
     fn try_flush(&mut self) {
         if self.rows_written == 0 {
             return;
@@ -183,6 +201,19 @@ impl LogFlusher {
                 match self.holding_log_reciver.try_recv() {
                     Ok(log) => {
                         if self.encode_holding_log(log).is_err() {
+                            encoding_failed = true;
+                            break;
+                        }
+                        did_work = true;
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            for _ in 0..MAX_BATCH {
+                match self.trade_log_reciver.try_recv() {
+                    Ok(log) => {
+                        if self.encode_trade_log(log).is_err() {
                             encoding_failed = true;
                             break;
                         }
