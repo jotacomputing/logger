@@ -58,6 +58,9 @@ impl LogPoller{
             if let Ok(Some(order_log))=self.order_log_queue.dequeue(){
                 let _ = self.order_log_sender.try_send(order_log);
             }
+            if let Ok(Some(trade_log)) =self.trade_log_queue.dequeue(){
+                let _ = self.trade_log_sender.try_send(trade_log);
+            }
         }
     }
 }
