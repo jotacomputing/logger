@@ -5,7 +5,7 @@ use questdb::ingress::{Sender, Buffer, TimestampNanos};
 use crate::logger::types::{
     BalanceLogWrapper,
     HoldingLogWrapper,
-    OrderLogWrapper,
+    OrderLogWrapper, TradeLogs,
 };
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(10);
@@ -15,6 +15,7 @@ pub struct LogFlusher {
     pub order_log_reciver: Receiver<OrderLogWrapper>,
     pub balance_log_receiver: Receiver<BalanceLogWrapper>,
     pub holding_log_reciver: Receiver<HoldingLogWrapper>,
+    pub trade_log_reciver : Receiver<TradeLogs>,
 
     pub sender: Sender,
     pub buffer: Buffer,
@@ -28,6 +29,7 @@ impl LogFlusher {
         order_log_reciver: Receiver<OrderLogWrapper>,
         balance_log_receiver: Receiver<BalanceLogWrapper>,
         holding_log_reciver: Receiver<HoldingLogWrapper>,
+        trade_log_reciver : Receiver<TradeLogs>
     ) -> Self {
         let sender = Sender::from_conf("http::addr=localhost:9000;")
             .expect("Failed to connect to QuestDB");
@@ -38,6 +40,7 @@ impl LogFlusher {
             order_log_reciver,
             balance_log_receiver,
             holding_log_reciver,
+            trade_log_reciver,
             sender,
             buffer,
             rows_written: 0,

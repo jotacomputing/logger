@@ -89,3 +89,15 @@ pub enum BaseLogs{
     HoldingDelta(HoldingDelta) ,
     OrderDelta(OrderDelta)
 }
+
+#[repr(C)]
+#[derive(Debug , Clone , Copy)]
+pub struct TradeLogs{
+    pub trade_time      : i64 ,
+    pub buyer_order_id  : u64 ,
+    pub seller_order_id : u64 ,
+    pub price           : u64 ,
+    pub symbol          : u32 ,
+    pub quantity        : u32 ,
+    pub is_buyer_maker  : bool,
+}
