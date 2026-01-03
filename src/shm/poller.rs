@@ -1,4 +1,4 @@
-use crate::{logger::types::{BalanceLogWrapper, HoldingLogWrapper, OrderLogWrapper, TradeLogs}, shm::{balance_logs::BalanceLogQueue, holdings_logs::HoldingLogQueue, order_logs::OrderLogQueue, trade_logs::TradeLogQueue}};
+use crate::{logger::types::{BalanceLogWrapper, HoldingLogWrapper, OrderBookSnapShot, OrderLogWrapper, TradeLogs}, shm::{balance_logs::BalanceLogQueue, holdings_logs::HoldingLogQueue, order_logs::OrderLogQueue, snapshot::OrderBookSnapShotQueue, trade_logs::TradeLogQueue}};
 use crossbeam::channel::Sender;
 pub struct LogPoller{
     pub order_log_queue   : OrderLogQueue,
@@ -9,6 +9,8 @@ pub struct LogPoller{
     pub holding_log_sender : Sender<HoldingLogWrapper>,
     pub trade_log_queue    : TradeLogQueue,
     pub trade_log_sender   : Sender<TradeLogs>,
+    pub snapshot_queue      : OrderBookSnapShotQueue ,
+    pub snapshot_sender     : Sender<OrderBookSnapShot>,
 
 }
 
@@ -16,12 +18,14 @@ impl LogPoller{
     pub fn new(order_log_sender  : Sender<OrderLogWrapper> , 
         balance_log_sender : Sender<BalanceLogWrapper>,
         holding_log_sender : Sender<HoldingLogWrapper>,
-        trade_log_sender   : Sender<TradeLogs>
+        trade_log_sender   : Sender<TradeLogs>,
+        snapshot_sender     : Sender<OrderBookSnapShot>,
     )->Self{
         let order_log_shm_queue = OrderLogQueue::open("/tmp/OrderLogs");
         let balance_log_shm_queue = BalanceLogQueue::open("/tmp/BalanceLogs");
         let holdings_log_queue = HoldingLogQueue::open("/tmp/HoldingLogs");
         let trade_log_queue = TradeLogQueue::open("/tmp/TradeLogs");
+        let snapshot_queue = OrderBookSnapShotQueue::open("/tmp/SnapShot");
         if order_log_shm_queue.is_err(){
             eprintln!("failed to open the order log queue");
         }
@@ -34,7 +38,9 @@ impl LogPoller{
         if trade_log_queue.is_err(){
             eprintln!("failed to open trade log queue");
         }
-
+        if snapshot_queue.is_err(){
+            eprintln!("failed to open snapshot queue");
+        }
         Self { 
             order_log_queue: order_log_shm_queue.unwrap(), 
             order_log_sender,
@@ -43,7 +49,9 @@ impl LogPoller{
             holding_log_queue: holdings_log_queue.unwrap(),
             holding_log_sender , 
             trade_log_queue : trade_log_queue.unwrap(), 
-            trade_log_sender
+            trade_log_sender , 
+            snapshot_queue : snapshot_queue.unwrap() ,
+            snapshot_sender
         }
     }
 
@@ -60,6 +68,9 @@ impl LogPoller{
             }
             if let Ok(Some(trade_log)) =self.trade_log_queue.dequeue(){
                 let _ = self.trade_log_sender.try_send(trade_log);
+            }
+            if let Ok(Some(snapshot))= self.snapshot_queue.dequeue(){
+                let _ =self.snapshot_sender.try_send(snapshot);
             }
         }
     }

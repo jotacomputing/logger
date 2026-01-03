@@ -34,15 +34,14 @@ pub struct HoldingLogWrapper{
 }
 
 
-#[derive( Debug, Clone , serde::Serialize)]
+#[repr(C)]
+#[derive( Debug, Clone , Copy)]
 pub struct OrderBookSnapShot{
+    pub timestamp              : i64 ,
     pub event_id               : u64 ,
     pub symbol                 : u32 , 
-    pub bids                   : Vec<[String ; 3]>,
-    pub asks                   : Vec<[String ; 3]> ,
-    pub timestamp              : i64 ,
-    pub severity               : u8 , 
-    pub source                 : u8 , 
+    pub bids                   : [(u64 , u32) ; 20],
+    pub asks                   : [(u64 , u32) ; 20],
 }
 
 
@@ -101,3 +100,5 @@ pub struct TradeLogs{
     pub quantity        : u32 ,
     pub is_buyer_maker  : bool,
 }
+
+

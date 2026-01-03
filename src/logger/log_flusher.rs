@@ -3,9 +3,7 @@ use crossbeam::channel::Receiver;
 use questdb::ingress::{Sender, Buffer, TimestampNanos};
 
 use crate::logger::types::{
-    BalanceLogWrapper,
-    HoldingLogWrapper,
-    OrderLogWrapper, TradeLogs,
+    BalanceLogWrapper, HoldingLogWrapper, OrderBookSnapShot, OrderLogWrapper, TradeLogs
 };
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(10);
@@ -16,7 +14,7 @@ pub struct LogFlusher {
     pub balance_log_receiver: Receiver<BalanceLogWrapper>,
     pub holding_log_reciver: Receiver<HoldingLogWrapper>,
     pub trade_log_reciver : Receiver<TradeLogs>,
-
+    pub snapshot_reciver : Receiver<OrderBookSnapShot>,
     pub sender: Sender,
     pub buffer: Buffer,
 
@@ -29,7 +27,8 @@ impl LogFlusher {
         order_log_reciver: Receiver<OrderLogWrapper>,
         balance_log_receiver: Receiver<BalanceLogWrapper>,
         holding_log_reciver: Receiver<HoldingLogWrapper>,
-        trade_log_reciver : Receiver<TradeLogs>
+        trade_log_reciver : Receiver<TradeLogs>, 
+        snapshot_reciver : Receiver<OrderBookSnapShot>
     ) -> Self {
         let sender = Sender::from_conf("http::addr=localhost:9000;")
             .expect("Failed to connect to QuestDB");
@@ -41,6 +40,7 @@ impl LogFlusher {
             balance_log_receiver,
             holding_log_reciver,
             trade_log_reciver,
+            snapshot_reciver,
             sender,
             buffer,
             rows_written: 0,
@@ -148,6 +148,54 @@ impl LogFlusher {
         Ok(())
     }
 
+    #[inline(always)]
+    fn encode_snapshot(&mut self, snap: OrderBookSnapShot) -> questdb::Result<()> {
+        let ts = TimestampNanos::new(snap.timestamp);
+        let symbol = snap.symbol.to_string();
+    
+        // BIDS
+        for (level, (price, qty)) in snap.bids.iter().enumerate() {
+            if *qty == 0 {
+                break; // padded tail
+            }
+        
+            self.buffer
+                .table("orderbook_snapshots")?
+                .symbol("symbol", &symbol)?
+                .symbol("side", "bid")?
+                .column_i64("level", level as i64)?
+                .column_i64("price", *price as i64)?
+                .column_i64("quantity", *qty as i64)?
+                .column_i64("event_id", snap.event_id as i64)?
+                .at(ts)?;
+        
+            self.rows_written += 1;
+        }
+    
+        // ASKS
+        for (level, (price, qty)) in snap.asks.iter().enumerate() {
+            if *qty == 0 {
+                break;
+            }
+        
+            self.buffer
+                .table("orderbook_snapshots")?
+                .symbol("symbol", &symbol)?
+                .symbol("side", "ask")?
+                .column_i64("level", level as i64)?
+                .column_i64("price", *price as i64)?
+                .column_i64("quantity", *qty as i64)?
+                .column_i64("event_id", snap.event_id as i64)?
+                .at(ts)?;
+        
+            self.rows_written += 1;
+        }
+    
+        Ok(())
+    }
+
+
+    
 
 
     fn try_flush(&mut self) {
@@ -214,6 +262,19 @@ impl LogFlusher {
                 match self.trade_log_reciver.try_recv() {
                     Ok(log) => {
                         if self.encode_trade_log(log).is_err() {
+                            encoding_failed = true;
+                            break;
+                        }
+                        did_work = true;
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            for _ in 0..MAX_BATCH {
+                match self.snapshot_reciver.try_recv() {
+                    Ok(log) => {
+                        if self.encode_snapshot(log).is_err() {
                             encoding_failed = true;
                             break;
                         }
