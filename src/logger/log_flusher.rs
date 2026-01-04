@@ -3,18 +3,27 @@ use crossbeam::channel::Receiver;
 use questdb::ingress::{Sender, Buffer, TimestampNanos};
 
 use crate::logger::types::{
-    BalanceLogWrapper, HoldingLogWrapper, OrderBookSnapShot, OrderLogWrapper, TradeLogs
+    BalanceLogWrapper,
+    HoldingLogWrapper,
+    OrderBookSnapShot,
+    OrderLogWrapper,
+    TradeLogs,
 };
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(10);
-const MAX_BATCH: usize = 1000;
+
+const TRADE_BATCH: usize = 256;
+const ORDER_BATCH: usize = 256;
+const BALANCE_BATCH: usize = 256;
+const HOLDING_BATCH: usize = 256;
 
 pub struct LogFlusher {
     pub order_log_reciver: Receiver<OrderLogWrapper>,
     pub balance_log_receiver: Receiver<BalanceLogWrapper>,
     pub holding_log_reciver: Receiver<HoldingLogWrapper>,
-    pub trade_log_reciver : Receiver<TradeLogs>,
-    pub snapshot_reciver : Receiver<OrderBookSnapShot>,
+    pub trade_log_reciver: Receiver<TradeLogs>,
+    pub snapshot_reciver: Receiver<OrderBookSnapShot>,
+
     pub sender: Sender,
     pub buffer: Buffer,
 
@@ -27,8 +36,8 @@ impl LogFlusher {
         order_log_reciver: Receiver<OrderLogWrapper>,
         balance_log_receiver: Receiver<BalanceLogWrapper>,
         holding_log_reciver: Receiver<HoldingLogWrapper>,
-        trade_log_reciver : Receiver<TradeLogs>, 
-        snapshot_reciver : Receiver<OrderBookSnapShot>
+        trade_log_reciver: Receiver<TradeLogs>,
+        snapshot_reciver: Receiver<OrderBookSnapShot>,
     ) -> Self {
         let sender = Sender::from_conf("http::addr=localhost:9000;")
             .expect("Failed to connect to QuestDB");
@@ -47,6 +56,30 @@ impl LogFlusher {
             last_flush: Instant::now(),
         }
     }
+
+   
+
+    #[inline(always)]
+    fn encode_snapshot(&mut self, snap: OrderBookSnapShot) -> questdb::Result<()> {
+        let bids_json = serde_json::to_string(&snap.bids).unwrap();
+        let asks_json = serde_json::to_string(&snap.asks).unwrap();
+
+        self.buffer
+            .table("orderbook_snapshots")?
+            .symbol("symbol", snap.symbol.to_string())?
+            .column_i64("snapshot_id", snap.event_id as i64)?
+            .column_str("bids", &bids_json)?
+            .column_str("asks", &asks_json)?
+            .at(TimestampNanos::new(snap.timestamp))?;
+
+        // 🔥 Snapshot correctness > throughput
+        self.sender.flush(&mut self.buffer)?;
+        self.buffer = self.sender.new_buffer();
+
+        Ok(())
+    }
+
+   
 
     #[inline(always)]
     fn encode_order_log(&mut self, log: OrderLogWrapper) -> questdb::Result<()> {
@@ -88,14 +121,7 @@ impl LogFlusher {
         self.buffer
             .table("balance_logs")?
             .symbol("reason", if log.balance_delta.reason == 0 { "lock" } else { "update" })?
-            .symbol(
-                "severity",
-                match log.severity {
-                    0 => "info",
-                    1 => "error",
-                    _ => "debug",
-                },
-            )?
+            .symbol("severity", "info")?
             .column_i64("event_id", log.balance_delta.event_id as i64)?
             .column_i64("user_id", log.balance_delta.user_id as i64)?
             .column_i64("order_id", log.balance_delta.order_id as i64)?
@@ -112,15 +138,8 @@ impl LogFlusher {
         self.buffer
             .table("holding_logs")?
             .symbol("instrument", log.holding_delta.symbol.to_string())?
-            .symbol("reason", if log.holding_delta.reason == 0 { "lock" } else { "fill" })?
-            .symbol(
-                "severity",
-                match log.severity {
-                    0 => "info",
-                    1 => "error",
-                    _ => "debug",
-                },
-            )?
+            .symbol("reason", "update")?
+            .symbol("severity", "info")?
             .column_i64("event_id", log.holding_delta.event_id as i64)?
             .column_i64("user_id", log.holding_delta.user_id as i64)?
             .column_i64("order_id", log.holding_delta.order_id as i64)?
@@ -148,146 +167,57 @@ impl LogFlusher {
         Ok(())
     }
 
-    #[inline(always)]
-    fn encode_snapshot(&mut self, snap: OrderBookSnapShot) -> questdb::Result<()> {
-        let ts = TimestampNanos::new(snap.timestamp);
-        let symbol = snap.symbol.to_string();
-    
-        // BIDS
-        for (level, (price, qty)) in snap.bids.iter().enumerate() {
-            if *qty == 0 {
-                break; // padded tail
-            }
-        
-            self.buffer
-                .table("orderbook_snapshots")?
-                .symbol("symbol", &symbol)?
-                .symbol("side", "bid")?
-                .column_i64("level", level as i64)?
-                .column_i64("price", *price as i64)?
-                .column_i64("quantity", *qty as i64)?
-                .column_i64("event_id", snap.event_id as i64)?
-                .at(ts)?;
-        
-            self.rows_written += 1;
-        }
-    
-        // ASKS
-        for (level, (price, qty)) in snap.asks.iter().enumerate() {
-            if *qty == 0 {
-                break;
-            }
-        
-            self.buffer
-                .table("orderbook_snapshots")?
-                .symbol("symbol", &symbol)?
-                .symbol("side", "ask")?
-                .column_i64("level", level as i64)?
-                .column_i64("price", *price as i64)?
-                .column_i64("quantity", *qty as i64)?
-                .column_i64("event_id", snap.event_id as i64)?
-                .at(ts)?;
-        
-            self.rows_written += 1;
-        }
-    
-        Ok(())
-    }
-
-
-    
-
-
     fn try_flush(&mut self) {
         if self.rows_written == 0 {
             return;
         }
 
-        if self.rows_written >= MAX_BATCH || self.last_flush.elapsed() >= FLUSH_INTERVAL {
-            if let Err(e) = self.sender.flush(&mut self.buffer) {
-                eprintln!("QuestDB flush failed: {:?}", e);
-            }
-
+        if self.last_flush.elapsed() >= FLUSH_INTERVAL {
+            let _ = self.sender.flush(&mut self.buffer);
             self.buffer = self.sender.new_buffer();
             self.rows_written = 0;
             self.last_flush = Instant::now();
         }
     }
 
+   
+
     pub fn run(&mut self) {
         loop {
             let mut did_work = false;
-            let mut encoding_failed = false;
 
-            for _ in 0..MAX_BATCH {
-                match self.order_log_reciver.try_recv() {
-                    Ok(log) => {
-                        if self.encode_order_log(log).is_err() {
-                            encoding_failed = true;
-                            break;
-                        }
-                        did_work = true;
-                    }
-                    Err(_) => break,
-                }
+           
+            while let Ok(snap) = self.snapshot_reciver.try_recv() {
+                let _ = self.encode_snapshot(snap);
+                did_work = true;
             }
 
-            for _ in 0..MAX_BATCH {
-                match self.balance_log_receiver.try_recv() {
-                    Ok(log) => {
-                        if self.encode_balance_log(log).is_err() {
-                            encoding_failed = true;
-                            break;
-                        }
-                        did_work = true;
-                    }
-                    Err(_) => break,
-                }
+            for _ in 0..TRADE_BATCH {
+                if let Ok(log) = self.trade_log_reciver.try_recv() {
+                    let _ = self.encode_trade_log(log);
+                    did_work = true;
+                } else { break; }
             }
 
-            for _ in 0..MAX_BATCH {
-                match self.holding_log_reciver.try_recv() {
-                    Ok(log) => {
-                        if self.encode_holding_log(log).is_err() {
-                            encoding_failed = true;
-                            break;
-                        }
-                        did_work = true;
-                    }
-                    Err(_) => break,
-                }
+            for _ in 0..ORDER_BATCH {
+                if let Ok(log) = self.order_log_reciver.try_recv() {
+                    let _ = self.encode_order_log(log);
+                    did_work = true;
+                } else { break; }
             }
 
-            for _ in 0..MAX_BATCH {
-                match self.trade_log_reciver.try_recv() {
-                    Ok(log) => {
-                        if self.encode_trade_log(log).is_err() {
-                            encoding_failed = true;
-                            break;
-                        }
-                        did_work = true;
-                    }
-                    Err(_) => break,
-                }
+            for _ in 0..BALANCE_BATCH {
+                if let Ok(log) = self.balance_log_receiver.try_recv() {
+                    let _ = self.encode_balance_log(log);
+                    did_work = true;
+                } else { break; }
             }
 
-            for _ in 0..MAX_BATCH {
-                match self.snapshot_reciver.try_recv() {
-                    Ok(log) => {
-                        if self.encode_snapshot(log).is_err() {
-                            encoding_failed = true;
-                            break;
-                        }
-                        did_work = true;
-                    }
-                    Err(_) => break,
-                }
-            }
-
-            if encoding_failed {
-                self.buffer = self.sender.new_buffer();
-                self.rows_written = 0;
-                continue;
+            for _ in 0..HOLDING_BATCH {
+                if let Ok(log) = self.holding_log_reciver.try_recv() {
+                    let _ = self.encode_holding_log(log);
+                    did_work = true;
+                } else { break; }
             }
 
             self.try_flush();

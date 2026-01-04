@@ -18,15 +18,15 @@ pub struct QueueHeader {
     magic: AtomicU32,         // offset 128
     capacity: AtomicU32,      // offset 132
 }
-const QUEUE_MAGIC: u32 = 0xDEE;
+const QUEUE_MAGIC: u32 = 0xDEBBBB;
 // reduce size 
 const QUEUE_CAPACITY: usize = 65536;
-const LOG_SIZE: usize = 480;
+const LOG_SIZE: usize = std::mem::size_of::<OrderBookSnapShot>();
 const HEADER_SIZE: usize = std::mem::size_of::<QueueHeader>();
 const TOTAL_SIZE: usize = HEADER_SIZE + (QUEUE_CAPACITY * LOG_SIZE);
 
 // Compile-time layout assertions (fail build if wrong)
-const _: () = assert!(LOG_SIZE == 480, "Order must be 64 bytes");
+const _: () = assert!(LOG_SIZE == 664, "Order must be 664 bytes");
 const _: () = assert!(HEADER_SIZE == 136, "QueueHeader must be 136 bytes");
 const _: () = {
     // Verify ConsumerTail is at offset 64

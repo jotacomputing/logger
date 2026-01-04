@@ -17,7 +17,7 @@ pub struct QueueHeader {
     magic: AtomicU32,         // offset 128
     capacity: AtomicU32,      // offset 132
 }
-const QUEUE_MAGIC: u32 = 0xDEE;
+const QUEUE_MAGIC: u32 = 0xDEBB;
 // reduce size 
 const QUEUE_CAPACITY: usize = 65536;
 const LOG_SIZE: usize = std::mem::size_of::<HoldingLogWrapper>();

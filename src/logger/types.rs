@@ -39,11 +39,10 @@ pub struct HoldingLogWrapper{
 pub struct OrderBookSnapShot{
     pub timestamp              : i64 ,
     pub event_id               : u64 ,
-    pub symbol                 : u32 , 
     pub bids                   : [(u64 , u32) ; 20],
     pub asks                   : [(u64 , u32) ; 20],
+    pub symbol                 : u32 , 
 }
-
 
 
 #[derive( Debug, Clone, Copy)]
